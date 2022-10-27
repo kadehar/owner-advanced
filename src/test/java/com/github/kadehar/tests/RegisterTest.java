@@ -1,8 +1,10 @@
 package com.github.kadehar.tests;
 
+import com.codeborne.selenide.Selenide;
 import com.codeborne.selenide.WebDriverRunner;
 import com.github.javafaker.Faker;
-import io.restassured.http.ContentType;
+import com.github.kadehar.api.RegisterClient;
+import com.github.kadehar.model.User;
 import io.restassured.response.Response;
 import org.junit.jupiter.api.Test;
 import org.openqa.selenium.Cookie;
@@ -11,83 +13,56 @@ import java.util.Map;
 
 import static com.codeborne.selenide.Condition.text;
 import static com.codeborne.selenide.Selenide.*;
-import static io.restassured.RestAssured.given;
+import static io.qameta.allure.Allure.step;
 
 public class RegisterTest extends TestBase {
 
+    private static final String AUTH_COOKIE = "NOPCOMMERCE.AUTH";
+
     private final Faker faker = new Faker();
+    private final User user = new User();
+    private final RegisterClient client = new RegisterClient();
 
     @Test
     public void registerNewUserByAPI() {
-        Response registerPage = given()
-                .log().all()
-                .when()
-                .get("/register")
-                .then()
-                .log().all()
-                .extract()
-                .response();
+        step("Generate test data", () ->
+                user.setFirstName("Test")
+                        .setLastName("Test")
+                        .setEmail(faker.internet().emailAddress())
+                        .setPassword(faker.numerify("##########"))
+                        .setGender("M")
+        );
 
-        String token = registerPage.htmlPath()
-                .getString("**.find{it.@name == '__RequestVerificationToken'}.@value");
-        String email = faker.internet().emailAddress();
-        String password = faker.numerify("##########");
-        Response newUser = given()
-                .log().uri()
-                .log().cookies()
-                .log().headers()
-                .cookies(registerPage.cookies())
-                .contentType(ContentType.URLENC)
-                .formParam(
-                        "__RequestVerificationToken",
-                        token
-                )
-                .formParam(
-                        "Gender",
-                        "M"
-                )
-                .formParam(
-                        "FirstName",
-                        "Test"
-                )
-                .formParam(
-                        "LastName",
-                        "Test"
-                )
-                .formParam(
-                        "Email",
-                        email
-                )
-                .formParam(
-                        "Password",
-                        password
-                )
-                .formParam(
-                        "ConfirmPassword",
-                        password
-                )
-                .formParam(
-                        "register-button",
-                        "Register"
-                )
-                .when()
-                .post("/register")
-                .then()
-                .log().headers()
-                .log().cookies()
-                .log().body()
-                .extract()
-                .response();
-        Map<String, String> cookies = newUser.cookies();
+        Map<String, String> cookies = step("Register new user by API", () -> {
+            Response registerPage = client.register();
+            String token = registerPage.htmlPath()
+                    .getString("**.find{it.@name == '__RequestVerificationToken'}.@value");
+            Response newUser = client.createNewUser(
+                    token,
+                    registerPage.cookies(),
+                    user
+            );
 
-        open("/Themes/DefaultClean/Content/images/logo.png");
-        Cookie authCookie = new Cookie("NOPCOMMERCE.AUTH", cookies.get("NOPCOMMERCE.AUTH"));
-        WebDriverRunner.getWebDriver().manage().addCookie(authCookie);
-        open("/registerresult/1");
+            return newUser.cookies();
+        });
 
-        $(".result").shouldHave(text("Your registration completed"));
-        $(".account").shouldHave(text(email));
+        step("Setup user cookie", () -> {
+            open("/Themes/DefaultClean/Content/images/logo.png");
+            Cookie authCookie = new Cookie(
+                    AUTH_COOKIE,
+                    cookies.get(AUTH_COOKIE)
+            );
+            WebDriverRunner.getWebDriver().manage().addCookie(authCookie);
+            open("/registerresult/1");
+        });
 
-        clearBrowserCookies();
+        step("Check registration status", () -> {
+            step("Registration result message should be visible", () ->
+                    $(".result").shouldHave(text("Your registration completed")));
+            step("User email should be visible", () ->
+                    $(".account").shouldHave(text(user.email())));
+        });
+
+        step("Clear cookies", Selenide::clearBrowserCookies);
     }
 }
